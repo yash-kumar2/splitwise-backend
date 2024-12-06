@@ -59,6 +59,7 @@ router.post('group/:id/add-members', auth, async (req, res) => {
       return res.status(400).json({ error: 'At least one user ID is required.' });
 
     const group = await Group.findById(groupId);
+    
 
     if (!group) return res.status(404).json({ error: 'Group not found.' });
 
