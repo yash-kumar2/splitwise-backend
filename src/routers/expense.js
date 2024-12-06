@@ -1,0 +1,133 @@
+const express = require('express')
+const User = require('../models/user')
+const Group = require('../models/group')
+const Expense = require('../models/expense')
+const auth = require('../middleware/auth')
+const router = new express.Router()
+
+// POST: Create a new expense
+const validateExpense = async (req, res, next) => {
+    try {
+      const { group, payers, splits } = req.body;
+      const currentUserId = req.user._id;
+       // Calculate total paid and total split
+    const totalPaid = payers.reduce((sum, payer) => sum + payer.amount, 0);
+    const totalSplit = splits.reduce((sum, split) => sum + split.amount, 0);
+
+    // Check if total paid matches total split
+    if (Math.abs(totalPaid - totalSplit) > 0.01) { // Allow small floating-point discrepancies
+      return res.status(400).json({ 
+        error: 'Total amount paid must exactly equal total amount split',
+        totalPaid,
+        totalSplit
+      });
+    }
+  
+      // Validate that current user is one of the payers or split recipients
+      
+      // If group is present, perform group-specific validations
+      if (group) {
+        // Find the group and check if current user is a member
+        const groupDoc = await Group.findById(group);
+        
+        if (!groupDoc) {
+          return res.status(404).json({ error: 'Group not found' });
+        }
+  
+        // Check if current user is in the group
+        const isUserInGroup = groupDoc.users.some(
+          userId => userId.toString() === currentUserId.toString()
+        );
+        
+        if (!isUserInGroup) {
+          return res.status(403).json({ 
+            error: 'User is not a member of this group' 
+          });
+        }
+  
+        // Validate that all payers and splits are from the group
+        const groupUserIds = groupDoc.users.map(id => id.toString());
+        
+        const arePayersInGroup = payers.every(
+          payer => groupUserIds.includes(payer.user.toString())
+        );
+        
+        const areSplitsInGroup = splits.every(
+          split => groupUserIds.includes(split.user.toString())
+        );
+  
+        if (!arePayersInGroup || !areSplitsInGroup) {
+          return res.status(400).json({ 
+            error: 'All payers and split recipients must be members of the group' 
+          });
+        }
+      } else {
+        // If no group, ensure only one payer and one split
+        if (payers.length !== 1 || splits.length !== 1) {
+          return res.status(400).json({ 
+            error: 'Without a group, there must be exactly one payer and one split recipient' 
+          });
+        }
+        const isUserInPayersOrSplits = 
+        payers.some(payer => payer.user.toString() === currentUserId.toString()) ||
+        splits.some(split => split.user.toString() === currentUserId.toString());
+      
+      if (!isUserInPayersOrSplits) {
+        return res.status(400).json({ 
+          error: 'Current user must be one of the payers or split recipients' 
+        });
+      }
+  
+      }
+  
+      // If all validations pass, proceed to the next middleware/route handler
+      next();
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+  
+router.post('/expense',auth,validateExpense, async (req, res) => {
+  try {
+    const expense = new Expense(req.body);
+    expense.createdBy=req.user._id;
+    await expense.save();
+    res.status(201).json(expense);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// GET: Retrieve all expenses
+router.get('/', async (req, res) => {
+  try {
+    const expenses = await Expense.find().populate('group payers.user splits.user createdBy');
+    res.json(expenses);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT: Update an expense by ID
+router.put('/:id', async (req, res) => {
+  try {
+    const expense = await Expense.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    if (!expense) return res.status(404).json({ error: 'Expense not found' });
+    res.json(expense);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// PATCH: Partially update an expense by ID
+router.patch('/:id', async (req, res) => {
+  try {
+    const expense = await Expense.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    if (!expense) return res.status(404).json({ error: 'Expense not found' });
+    res.json(expense);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+module.exports = router;

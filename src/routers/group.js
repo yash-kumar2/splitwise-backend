@@ -1,6 +1,9 @@
 const express = require('express')
 const User = require('../models/user')
 const Group = require('../models/group')
+const Expense = require('../models/expense')
+const Settlement=require('../models/settlement')
+const SimplifiedPayment=require('../models/simplifiedPayment')
 const auth = require('../middleware/auth')
 const router = new express.Router()
 
@@ -50,10 +53,12 @@ router.put('/:id', async (req, res) => {
 });
 
 // POST: Add members to a group
-router.post('group/:id/add-members', auth, async (req, res) => {
+router.post('/group/:id/add-members', auth, async (req, res) => {
   try {
     const groupId = req.params.id;
-    const { users } = req.body; // Expecting an array of user IDs
+    const { users } = req.body; 
+    const uniqueUsers = Array.from(new Set(users.map(user => user.id)))
+    .map(id => users.find(user => user.id === id));// Expecting an array of user IDs
 
     if (!Array.isArray(users) || users.length === 0)
       return res.status(400).json({ error: 'At least one user ID is required.' });
@@ -69,7 +74,7 @@ router.post('group/:id/add-members', auth, async (req, res) => {
     }
 
     // Add new members, avoiding duplicates
-    const newUsers = users.filter(user => !group.users.includes(user));
+    const newUsers = uniqueUsers.filter(user => !group.users.includes(user));
     group.users.push(...newUsers);
 
     await group.save();
@@ -160,9 +165,15 @@ router.post('/:id/simplify-payments',auth, async (req, res) => {
 });
 
 // Update activities to include simplified transactions
-router.get('/:id/activities',auth, async (req, res) => {
+router.get('/group/:id/activities',auth, async (req, res) => {
   try {
     const groupId = req.params.id;
+    const group = await Group.findById(groupId);
+    if (!group.users.includes(req.user._id)) {
+      return res.status(403).json({ error: 'You must be a member of the group to get activities.' });
+    }
+    console.log(Expense,SimplifiedPayment)
+
 
     const expenses = await Expense.find({ group: groupId }).populate('payers.user splits.user createdBy');
     const settlements = await Settlement.find({ group: groupId }).populate('settler settlements.user');
@@ -181,7 +192,7 @@ router.get('/:id/activities',auth, async (req, res) => {
 });
 
 // Calculate balances (including simplified payments)
-router.get('/:id/balances',auth, async (req, res) => {
+router.get('/group/:id/balances',auth, async (req, res) => {
   try {
     const groupId = req.params.id;
     const userId = req.user._id;
