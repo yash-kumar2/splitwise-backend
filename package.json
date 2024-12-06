@@ -1,0 +1,24 @@
+{
+  "name": "ffcs-manager",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.16.4",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^3.1.10",
+    "mongoose": "^8.8.3",
+    "validator": "^13.12.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
