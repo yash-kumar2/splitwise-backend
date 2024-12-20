@@ -335,39 +335,17 @@ router.get('/group/:id/activities',auth, async (req, res) => {
     if (!group.users.includes(req.user._id)) {
       return res.status(403).json({ error: 'You must be a member of the group to get activities.' });
     }
+    const user=req.user._id;
     console.log(Expense,SimplifiedPayment)
 
-
-    const expenses = await Expense.find({ group: groupId }).populate('payers.user splits.user createdBy');
-    const settlements = await Settlement.find({ group: groupId }).populate('settler settlements.user');
-    const simplifiedPayments = await SimplifiedPayment.find({ group: groupId }).populate('payer payee');
-
-    const activities = {
-      expenses,
-      settlements,
-      simplifiedPayments,
-    };
-
-    res.json(activities);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Update activities to include simplified transactions
-router.get('/group/:id/activities',auth, async (req, res) => {
-  try {
-    const groupId = req.params.id;
-    const group = await Group.findById(groupId);
-    if (!group.users.includes(req.user._id)) {
-      return res.status(403).json({ error: 'You must be a member of the group to get activities.' });
-    }
 
     const expenses = await Expense.find({ group: groupId }).populate('payers.user splits.user createdBy');
     const settlements = await Settlement.find({ group: groupId }).populate('settler settlements.user');
     const simplifiedPayments = await SimplifiedPayment.find({ group: groupId }).populate('payments.payer payments.payee');
 
     const activities = {
+      user,
+      group,
       expenses,
       settlements,
       simplifiedPayments,
@@ -378,6 +356,31 @@ router.get('/group/:id/activities',auth, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+
+// router.get('/group/:id/activities',auth, async (req, res) => {
+//   try {
+//     const groupId = req.params.id;
+//     const group = await Group.findById(groupId);
+//     if (!group.users.includes(req.user._id)) {
+//       return res.status(403).json({ error: 'You must be a member of the group to get activities.' });
+//     }
+
+//     const expenses = await Expense.find({ group: groupId }).populate('payers.user splits.user createdBy');
+//     const settlements = await Settlement.find({ group: groupId }).populate('settler settlements.user');
+//     const simplifiedPayments = await SimplifiedPayment.find({ group: groupId }).populate('payments.payer payments.payee');
+
+//     const activities = {
+//       expenses,
+//       settlements,
+//       simplifiedPayments,
+//     };
+
+//     res.json(activities);
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 router.get('/groups', auth, async (req, res) => {
   try {
     console.log(req.user._id)
@@ -398,7 +401,7 @@ router.get('/groups', auth, async (req, res) => {
         balances[groupId][to] += amount;
       }
     };
-    //console.log(groups)
+    
 
     for (const group of groups) {
       
@@ -409,7 +412,7 @@ router.get('/groups', auth, async (req, res) => {
       const settlements = await Settlement.find({ group: groupId });
       const simplifiedPayments = await SimplifiedPayment.find({ group: groupId });
 
-      // Process expenses
+    
       expenses.forEach((expense) => {
         const totalSplit = expense.splits.reduce((sum, split) => sum + split.amount, 0);
         expense.payers.forEach((payer) => {
@@ -427,7 +430,7 @@ router.get('/groups', auth, async (req, res) => {
         });
       });
 
-      // Process simplified payments
+      
       simplifiedPayments.forEach((simplifiedPayment) => {
         simplifiedPayment.payments.forEach((payment) => {
           updateBalances(groupId, payment.payer.toString(), payment.payee.toString(), payment.amount);
@@ -452,59 +455,125 @@ router.get('/groups', auth, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+router.get('/group/:id/members', async (req, res) => {
+  const groupId = req.params.id;
+
+  try {
+      const group = await Group.findById(groupId).populate('users');
+
+      if (!group) {
+          return res.status(404).send({ error: 'Group not found' });
+      }
+
+      res.send({ members: group.users });
+  } catch (error) {
+      res.status(500).send({ error: 'Something went wrong' });
+  }
+});
 
 // Calculate balances (including simplified payments)
-router.get('/group/:id/balances',auth, async (req, res) => {
+router.get('/group/:id/balances', auth, async (req, res) => {
   try {
     const groupId = req.params.id;
     const userId = req.user._id;
-
-    const expenses = await Expense.find({ group: groupId });
-    const settlements = await Settlement.find({ group: groupId });
-    const simplifiedPayments = await SimplifiedPayment.find({ group: groupId });
-
+    const [expenses, settlements, simplifiedPayments] = await Promise.all([
+      Expense.find({ group: groupId })
+        .populate('payers.user', 'userId email')
+        .populate('splits.user', 'userId email'),
+      Settlement.find({ group: groupId })
+        .populate('settler', 'userId email')
+        .populate('settlements.user', 'userId email'),
+      SimplifiedPayment.find({ group: groupId })
+        .populate('payments.payer', 'userId email')
+        .populate('payments.payee', 'userId email'),
+    ]);
     const balances = {};
-
-    const updateBalances = (from, to, amount) => {
-      if(from==to){
-        return
+    const initializeBalance = (user) => {
+      if (!user) return;
+      const userId = user._id ? user._id.toString() : user;
+      if (!balances[userId]) {
+        balances[userId] = { balance: 0, user: user };
       }
-      if(from!=req.user._id.toString()&&to!=req.user._id.toString()){
-        return;
-      }
-      if (!balances[from]) balances[from] = 0;
-      if (!balances[to]) balances[to] = 0;
-
-      balances[from] -= amount;
-      balances[to] += amount;
     };
+    const updateBalances = (from, to, amount) => {
+      if (!from || !to || from === to) return;
+      initializeBalance(from);
+      initializeBalance(to);
+      
+      const fromId = from._id ? from._id.toString() : from;
+      const toId = to._id ? to._id.toString() : to;
+      
+      balances[fromId].balance -= amount;
+      balances[toId].balance += amount;
+    };
+    
+    // Debug logging
+    console.log('Expenses count:', expenses.length);
+    console.log('Settlements count:', settlements.length);
+    console.log('SimplifiedPayments count:', simplifiedPayments.length);
 
-    // Process all transactions
-    expenses.forEach(expense => {
-      const totalSplit = expense.splits.reduce((sum, split) => sum + split.amount, 0);
-      expense.payers.forEach(payer => {
+    expenses.forEach((expense) => {
+      const totalSplit = expense.splits.reduce((sum, split) => sum + (split.amount || 0), 0);
+      expense.payers.forEach((payer) => {
+        if (!payer.user || !payer.amount) {
+          console.log('Skipping expense payer due to missing data:', payer);
+          return;
+        }
+        
         const contributionRatio = payer.amount / totalSplit;
-        expense.splits.forEach(split => {
-          updateBalances(payer.user.toString(), split.user.toString(), split.amount * contributionRatio);
+        expense.splits.forEach((split) => {
+          if (!split.user) {
+            console.log('Skipping expense split due to missing user:', split);
+            return;
+          }
+          
+          const splitAmount = split.amount * contributionRatio;
+          updateBalances(payer.user, split.user, splitAmount);
         });
       });
     });
-
-    settlements.forEach(settlement => {
-      settlement.settlements.forEach(detail => {
-        updateBalances(settlement.settler.toString(), detail.user.toString(), detail.amount);
+    
+    settlements.forEach((settlement) => {
+      if (!settlement.settler) {
+        console.log('Skipping settlement due to missing settler:', settlement);
+        return;
+      }
+      
+      settlement.settlements.forEach((detail) => {
+        if (!detail.user) {
+          console.log('Skipping settlement detail due to missing user:', detail);
+          return;
+        }
+        
+        updateBalances(settlement.settler, detail.user, detail.amount);
       });
     });
-
-    simplifiedPayments.forEach(simplifiedPayment => {
-      simplifiedPayment.payments.forEach(payment => {
-        updateBalances(payment.payer.toString(), payment.payee.toString(), payment.amount);
+    
+    simplifiedPayments.forEach((simplifiedPayment) => {
+      simplifiedPayment.payments.forEach((payment) => {
+        if (!payment.payer || !payment.payee) {
+          console.log('Skipping simplified payment due to missing payer/payee:', payment);
+          return;
+        }
+        
+        updateBalances(payment.payer, payment.payee, payment.amount);
       });
     });
-
-    res.json(balances);
+    
+    const result = Object.entries(balances)
+      .filter(([, data]) => data.user) 
+      .map(([id, data]) => ({
+        userId: id,
+        balance: Number(data.balance.toFixed(2)),
+        user: data.user,
+      }));
+    
+    res.json({ userId, balances: result });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Balance calculation error:', err);
+    res.status(500).json({ error: err.message, stack: err.stack });
   }
 });
+
+
 module.exports = router;
