@@ -14,6 +14,23 @@ router.post('/users', async (req, res) => {
         res.status(400).send(e)
     }
 })
+router.get('/users/search', async (req, res) => {
+    const { query } = req.query;
+
+    if (!query) {
+        return res.status(400).send({ error: 'Query parameter is required' });
+    }
+
+    try {
+        const users = await User.find({ 
+            userId: { $regex: query, $options: 'i' } // Case-insensitive search for userId
+        }).select('_id userId email'); // Return only relevant fields
+        res.send(users);
+    } catch (error) {
+        res.status(500).send({ error: 'Failed to fetch users' });
+    }
+});
+
 
 router.post('/users/login', async (req, res) => {
     try {

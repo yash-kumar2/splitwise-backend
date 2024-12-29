@@ -51,37 +51,105 @@ router.put('/:id', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// router.post('/group/add-members', auth, async (req, res) => {
+//   const { groupId, newMemberIds } = req.body; // `newMemberIds` is an array of user IDs
+
+//   try {
+//       // Fetch all current members of the group (replace with your group logic if needed)
+//       const group = await Group.findById(groupId).populate('members'); // Assuming a `Group` model exists
+//       if (!group) {
+//           return res.status(404).send({ error: 'Group not found' });
+//       }
+
+//       const currentMembers = group.members; // Existing group members
+//       const allMemberIds = [...currentMembers.map(member => member._id.toString()), ...newMemberIds];
+
+//       // Ensure all members (previous and new) are friends with one another
+//       const allMembers = await User.find({ _id: { $in: allMemberIds } });
+
+//       for (let i = 0; i < allMembers.length; i++) {
+//           const member = allMembers[i];
+
+//           // Add all other members to the current member's friends list
+//           for (let j = 0; j < allMembers.length; j++) {
+//               if (i !== j && !member.friends.includes(allMembers[j]._id)) {
+//                   member.friends.push(allMembers[j]._id);
+//               }
+//           }
+
+//           // Save the updated member
+//           await member.save();
+//       }
+
+//       // Add new members to the group (if needed)
+//       group.members = allMemberIds;
+//       await group.save();
+
+//       res.status(200).send({ message: 'Members added and friendships updated successfully' });
+//   } catch (e) {
+//       console.error(e);
+//       res.status(400).send(e);
+//   }
+// });
 
 // POST: Add members to a group
 router.post('/group/:id/add-members', auth, async (req, res) => {
   try {
     const groupId = req.params.id;
-    const { users } = req.body; 
-    const uniqueUsers = Array.from(new Set(users.map(user => user.id)))
-    .map(id => users.find(user => user.id === id));// Expecting an array of user IDs
+    const { users } = req.body;
 
-    if (!Array.isArray(users) || users.length === 0)
+    if (!Array.isArray(users) || users.length === 0) {
       return res.status(400).json({ error: 'At least one user ID is required.' });
+    }
 
-    const group = await Group.findById(groupId);
-    
+    const uniqueUsers = Array.from(new Set(users.map(user => user.id)))
+      .map(id => users.find(user => user.id === id));
 
+    const group = await Group.findById(groupId).populate('users');
     if (!group) return res.status(404).json({ error: 'Group not found.' });
 
+    const currentMembers = group.users;
+
     // Check if the requesting user is a member of the group
-    if (!group.users.includes(req.user._id)) {
+    if (!currentMembers.some(member => member._id.toString() === req.user._id.toString())) {
       return res.status(403).json({ error: 'You must be a member of the group to add new members.' });
     }
 
     // Add new members, avoiding duplicates
-    const newUsers = uniqueUsers.filter(user => !group.users.includes(user));
+    const newUsers = uniqueUsers.filter(user => 
+      !currentMembers.some(member => member._id.toString() === user.id)
+    );
     group.users.push(...newUsers);
 
-
     await group.save();
-    res.json(group);
+
+    const allMemberIds = [
+      ...currentMembers.map(member => member._id.toString()),
+      ...newUsers.map(user => user.id),
+    ];
+    const allMembers = await User.find({ _id: { $in: allMemberIds } });
+
+    // Update friends lists in bulk
+    const updates = allMembers.map(member => {
+      const friends = allMembers
+        .filter(other => other._id.toString() !== member._id.toString())
+        .map(other => other._id);
+
+      return User.updateOne(
+        { _id: member._id },
+        { $addToSet: { friends: { $each: friends } } }
+      );
+    });
+    await Promise.all(updates);
+
+    res.json({
+      id: group._id,
+      name: group.name,
+      users: group.users.map(user => ({ id: user._id, name: user.name })),
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'An unexpected error occurred.' });
   }
 });
 router.post('/group/:id/simplify-payments', auth, async (req, res) => {
@@ -496,7 +564,9 @@ router.get('/group/:id/balances', auth, async (req, res) => {
       }
     };
     const updateBalances = (from, to, amount) => {
-      if (!from || !to || from === to) return;
+      console.log(from)
+      console.log(userId)
+      if (!from || !to || from === to ||(from._id.toString()!=userId.toString()&&to._id.toString()!=userId.toString())) return;
       initializeBalance(from);
       initializeBalance(to);
       

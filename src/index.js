@@ -3,6 +3,7 @@ require('./db/mongoose')
 const userRouter = require('./routers/user')
 const groupRouter = require('./routers/group')
 const expenseRouter = require('./routers/expense')
+const friendRouter = require('./routers/friends')
 const cors=require('cors')
 
 const app = express()
@@ -15,6 +16,7 @@ app.use(express.json())
 app.use(userRouter)
 app.use(groupRouter)
 app.use(expenseRouter)
+app.use(friendRouter)
 
 app.listen(port, () => {
     console.log('Server is up on port ' + port)
