@@ -8,6 +8,7 @@ const SimplifiedPaymentSchema = new mongoose.Schema({
     payee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     amount: { type: Number, required: true, min: 0 }
   }],
+  readList: { type: [mongoose.Schema.Types.ObjectId], ref: 'User', default: [] },
   createdAt: { type: Date, default: Date.now },
 });
 

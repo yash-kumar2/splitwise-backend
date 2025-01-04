@@ -1,5 +1,9 @@
 const express = require('express')
 const User = require('../models/user')
+const Group = require('../models/group')
+const Expense = require('../models/expense')
+const Settlement=require('../models/settlement')
+const SimplifiedPayment=require('../models/simplifiedPayment')
 const auth = require('../middleware/auth')
 const router = new express.Router()
 
@@ -95,5 +99,66 @@ router.delete('/users/me', auth, async (req, res) => {
         res.status(500).send()
     }
 })
+router.get('/user/activity', auth, async (req, res) => {
+    try {
+      const userId = req.user._id; // Logged-in user
+      const friendId = req.params.id; // Friend's ID
+  
+      // Fetch activities where both the user and the friend are involved
+      const [expenses, settlements, simplifiedPayments] = await Promise.all([
+        Expense.find({
+          $or: [
+            { 'payers.user': { $in: [userId] } },
+            { 'splits.user': { $in: [userId] } },
+          ],
+        })
+          .populate('payers.user', 'userId email')
+          .populate('splits.user', 'userId email')
+          .populate('group', 'name'), // Populate group name
+        Settlement.find({
+          $or: [
+            { settler: { $in: [userId] } },
+            { 'settlements.user': { $in: [userId] } },
+          ],
+        })
+          .populate('settler', 'userId email')
+          .populate('settlements.user', 'userId email')
+          .populate('group', 'name'), // Populate group name
+        SimplifiedPayment.find({
+          $or: [
+            { 'payments.payer': { $in: [userId] } },
+            { 'payments.payee': { $in: [userId] } },
+          ],
+        })
+          .populate('payments.payer', 'userId email')
+          .populate('payments.payee', 'userId email')
+          .populate('group', 'name'), // Populate group name
+      ]);
+  
+      // Combine all activities into a single array
+      const activities = [
+        ...expenses.map((expense) => ({
+          type: 'expense',
+          data: expense,
+        })),
+        ...settlements.map((settlement) => ({
+          type: 'settlement',
+          data: settlement,
+        })),
+        ...simplifiedPayments.map((payment) => ({
+          type: 'simplifiedPayment',
+          data: payment,
+        })),
+      ];
+  
+      // Filter activities to ensure both the user and friend are involved
+      
+  
+      res.json({ activities,user:userId });
+    } catch (err) {
+      console.error('Error fetching friend activities:', err);
+      res.status(500).json({ error: err.message, stack: err.stack });
+    }
+  });
 
 module.exports = router

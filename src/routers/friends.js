@@ -107,6 +107,95 @@ router.get('/friend-balances', auth, async (req, res) => {
     }
   });
   
+  router.get('/friend/:id/activity', auth, async (req, res) => {
+    try {
+      const userId = req.user._id; // Logged-in user
+      const friendId = req.params.id; // Friend's ID
+  
+      // Fetch activities where both the user and the friend are involved
+      const [expenses, settlements, simplifiedPayments] = await Promise.all([
+        Expense.find({
+          $or: [
+            { 'payers.user': { $in: [userId, friendId] } },
+            { 'splits.user': { $in: [userId, friendId] } },
+          ],
+        })
+          .populate('payers.user', 'userId email')
+          .populate('splits.user', 'userId email')
+          .populate('group', 'name'), // Populate group name
+        Settlement.find({
+          $or: [
+            { settler: { $in: [userId, friendId] } },
+            { 'settlements.user': { $in: [userId, friendId] } },
+          ],
+        })
+          .populate('settler', 'userId email')
+          .populate('settlements.user', 'userId email')
+          .populate('group', 'name'), // Populate group name
+        SimplifiedPayment.find({
+          $or: [
+            { 'payments.payer': { $in: [userId, friendId] } },
+            { 'payments.payee': { $in: [userId, friendId] } },
+          ],
+        })
+          .populate('payments.payer', 'userId email')
+          .populate('payments.payee', 'userId email')
+          .populate('group', 'name'), // Populate group name
+      ]);
+  
+      // Combine all activities into a single array
+      const activities = [
+        ...expenses.map((expense) => ({
+          type: 'expense',
+          data: expense,
+        })),
+        ...settlements.map((settlement) => ({
+          type: 'settlement',
+          data: settlement,
+        })),
+        ...simplifiedPayments.map((payment) => ({
+          type: 'simplifiedPayment',
+          data: payment,
+        })),
+      ];
+  
+      // Filter activities to ensure both the user and friend are involved
+      const filteredActivities = activities.filter((activity) => {
+        const { data } = activity;
+        switch (activity.type) {
+          case 'expense':
+            return (
+              data.payers.some((payer) => payer.user && [userId, friendId].includes(payer.user._id.toString())) &&
+              data.splits.some((split) => split.user && [userId, friendId].includes(split.user._id.toString()))
+            );
+          case 'settlement':
+            return (
+              [data.settler._id.toString(), ...data.settlements.map((s) => s.user._id.toString())].includes(
+                userId.toString()
+              ) &&
+              [data.settler._id.toString(), ...data.settlements.map((s) => s.user._id.toString())].includes(
+                friendId.toString()
+              )
+            );
+          case 'simplifiedPayment':
+            return (
+              data.payments.some(
+                (payment) =>
+                  [payment.payer._id.toString(), payment.payee._id.toString()].includes(userId.toString()) &&
+                  [payment.payer._id.toString(), payment.payee._id.toString()].includes(friendId.toString())
+              )
+            );
+          default:
+            return false;
+        }
+      });
+  
+      res.json({ activities: filteredActivities,user:userId });
+    } catch (err) {
+      console.error('Error fetching friend activities:', err);
+      res.status(500).json({ error: err.message, stack: err.stack });
+    }
+  });
   
 
 

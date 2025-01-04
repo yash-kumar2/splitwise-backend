@@ -407,9 +407,9 @@ router.get('/group/:id/activities',auth, async (req, res) => {
     console.log(Expense,SimplifiedPayment)
 
 
-    const expenses = await Expense.find({ group: groupId }).populate('payers.user splits.user createdBy');
-    const settlements = await Settlement.find({ group: groupId }).populate('settler settlements.user');
-    const simplifiedPayments = await SimplifiedPayment.find({ group: groupId }).populate('payments.payer payments.payee');
+    const expenses = await Expense.find({ group: groupId }).populate('payers.user splits.user createdBy').populate('group', 'name');
+    const settlements = await Settlement.find({ group: groupId }).populate('settler settlements.user').populate('group', 'name');
+    const simplifiedPayments = await SimplifiedPayment.find({ group: groupId }).populate('payments.payer payments.payee').populate('group', 'name');
 
     const activities = {
       user,

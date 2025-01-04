@@ -129,5 +129,68 @@ router.patch('/:id', async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+router.post('/expenses/:id/mark-as-read',auth, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+
+  try {
+    const expense = await Expense.findByIdAndUpdate(
+      id,
+      { $addToSet: { readList: userId } }, // Add userId to readList if not already present
+      { new: true }
+    );
+
+    if (!expense) {
+      return res.status(404).json({ message: 'Expense not found' });
+    }
+
+    res.status(200).json(expense);
+  } catch (err) {
+    res.status(500).json({ message: 'Error marking expense as read', error: err.message });
+  }
+});
+router.post('/simplified-payments/:id/mark-as-read',auth, async (req, res) => {
+  const { id } = req.params;
+  const  userId = req.user._id;
+
+  try {
+    const simplifiedPayment = await SimplifiedPayment.findByIdAndUpdate(
+      id,
+      { $addToSet: { readList: userId } }, // Add userId to readList if not already present
+      { new: true }
+    );
+
+    if (!simplifiedPayment) {
+      return res.status(404).json({ message: 'Simplified Payment not found' });
+    }
+
+    res.status(200).json(simplifiedPayment);
+  } catch (err) {
+    res.status(500).json({ message: 'Error marking simplified payment as read', error: err.message });
+  }
+});
+router.post('/settlements/:id/mark-as-read',auth, async (req, res) => {
+  const { id } = req.params;
+  console.log(req.user)
+  const  userId = req.user._id;
+  
+
+  try {
+    const settlement = await Settlement.findByIdAndUpdate(
+      id,
+      { $addToSet: { readList: userId } }, // Add userId to readList if not already present
+      { new: true }
+    );
+
+    if (!settlement) {
+      return res.status(404).json({ message: 'Settlement not found' });
+    }
+
+    res.status(200).json(settlement);
+  } catch (err) {
+    res.status(500).json({ message: 'Error marking settlement as read', error: err.message });
+  }
+});
+
 
 module.exports = router;

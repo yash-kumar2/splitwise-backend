@@ -17,6 +17,7 @@ const ExpenseSchema = new mongoose.Schema({
   payers: { type: [PayerSchema], required: true },
   splits: { type: [SplitSchema], required: true },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  readList: { type: [mongoose.Schema.Types.ObjectId], ref: 'User', default: [] },
   createdAt: { type: Date, default: Date.now },
 });
 

@@ -9,6 +9,7 @@ const SettlementSchema = new mongoose.Schema({
   settler: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, 
   group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group' }, 
   settlements: { type: [SettlementDetailSchema], required: true }, 
+  readList: { type: [mongoose.Schema.Types.ObjectId], ref: 'User', default: [] },
   createdAt: { type: Date, default: Date.now }, 
 });
 
