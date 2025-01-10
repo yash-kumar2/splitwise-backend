@@ -152,152 +152,174 @@ router.post('/group/:id/add-members', auth, async (req, res) => {
     res.status(500).json({ error: 'An unexpected error occurred.' });
   }
 });
+const isValidAmount = (amount) => typeof amount === 'number' && !isNaN(amount) && amount > 0;
+const updateBalances = (balances, from, to, amount) => {
+  if (!balances[from]) balances[from] = {};
+  if (!balances[to]) balances[to] = {};
+
+  balances[from][to] = (balances[from][to] || 0) + amount;
+  balances[to][from] = (balances[to][from] || 0) - amount;
+};
 router.post('/group/:id/simplify-payments', auth, async (req, res) => {
   try {
     const groupId = req.params.id;
 
+    // Fetch data from database
     const expenses = await Expense.find({ group: groupId });
     const settlements = await Settlement.find({ group: groupId });
     const existingSimplifications = await SimplifiedPayment.find({ group: groupId });
 
+    // Initialize balances
     const balances = {};
-
-    const updateBalances = (from, to, amount) => {
-      if (!balances[from]) balances[from] = {};
-      if (!balances[to]) balances[to] = {};
-
-      balances[from][to] = (balances[from][to] || 0) + amount;
-      balances[to][from] = (balances[to][from] || 0) - amount;
-    };
 
     // Process Expenses
     expenses.forEach(expense => {
       const totalSplit = expense.splits.reduce((sum, split) => sum + split.amount, 0);
-      expense.payers.forEach(payer => {
-        const contributionRatio = payer.amount / totalSplit;
-        expense.splits.forEach(split => {
-          updateBalances(payer.user.toString(), split.user.toString(), split.amount * contributionRatio);
+
+      if (totalSplit > 0) {
+        expense.payers.forEach(payer => {
+          const contributionRatio = payer.amount / totalSplit;
+
+          expense.splits.forEach(split => {
+            if (isValidAmount(split.amount) && isValidAmount(payer.amount)) {
+              updateBalances(balances, payer.user.toString(), split.user.toString(), split.amount * contributionRatio);
+            }
+          });
         });
-      });
+      }
     });
 
     // Process Settlements
     settlements.forEach(settlement => {
       settlement.settlements.forEach(detail => {
-        updateBalances(settlement.settler.toString(), detail.user.toString(), detail.amount);
+        if (isValidAmount(detail.amount)) {
+          updateBalances(balances, settlement.settler.toString(), detail.user.toString(), detail.amount);
+        }
       });
     });
 
     // Process Existing Simplifications
     existingSimplifications.forEach(simplified => {
       simplified.payments.forEach(payment => {
-        updateBalances(payment.payer.toString(), payment.payee.toString(), payment.amount);
+        if (isValidAmount(payment.amount)) {
+          updateBalances(balances, payment.payer.toString(), payment.payee.toString(), payment.amount);
+        }
       });
     });
-            const allUsers = new Set();
-        expenses.forEach(expense => {
-          expense.payers.forEach(payer => allUsers.add(payer.user.toString()));
-          expense.splits.forEach(split => allUsers.add(split.user.toString()));
-        });
-        settlements.forEach(settlement => {
-          allUsers.add(settlement.settler.toString());
-          settlement.settlements.forEach(detail => allUsers.add(detail.user.toString()));
-        });
-        existingSimplifications.forEach(simplified => {
-          simplified.payments.forEach(payment => {
-            allUsers.add(payment.payer.toString());
-            allUsers.add(payment.payee.toString());
-          });
-        });
 
-        // Initialize balances for all users
-        allUsers.forEach(user => {
-          allUsers.forEach(user2=>{
-            if(!balances[user][user2])balances[user][user2]=0
-          })
-        });
+    // Ensure all balances are initialized for all users
+    const allUsers = new Set();
+
+    // Collect all users from expenses, settlements, and simplifications
+    expenses.forEach(expense => {
+      expense.payers.forEach(payer => allUsers.add(payer.user.toString()));
+      expense.splits.forEach(split => allUsers.add(split.user.toString()));
+    });
+
+    settlements.forEach(settlement => {
+      allUsers.add(settlement.settler.toString());
+      settlement.settlements.forEach(detail => allUsers.add(detail.user.toString()));
+    });
+
+    existingSimplifications.forEach(simplified => {
+      simplified.payments.forEach(payment => {
+        allUsers.add(payment.payer.toString());
+        allUsers.add(payment.payee.toString());
+      });
+    });
+
+    // Initialize balances for all user pairs
+    allUsers.forEach(user => {
+      if (!balances[user]) balances[user] = {};
+      allUsers.forEach(user2 => {
+        if (!balances[user][user2]) balances[user][user2] = 0;
+      });
+    });
 
     console.log("Initial Balances:", balances);
 
-    const simplifyBalances = (balances) => {
-      const simplifiedPayments = [];
-    
+    // Function to simplify balances and generate simplified payments
+    function eliminateCycles(balances) {
+      const payments = [];
+  
       // Helper function to find a cycle using DFS
-      const findCycle = (current, visited, stack, path) => {
-        visited.add(current);
-        path.push(current);
-    
-        for (const neighbor in balances[current]) {
-          if (balances[current][neighbor] > 0) {
-            if (stack.has(neighbor)) {
-              // Cycle found, extract the cycle
-              const cycleStartIndex = path.indexOf(neighbor);
-              return path.slice(cycleStartIndex).map((node, index) => ({
-                from: path[(cycleStartIndex + index) % path.length],
-                to: path[(cycleStartIndex + index + 1) % path.length],
-                amount: balances[path[(cycleStartIndex + index) % path.length]][
-                  path[(cycleStartIndex + index + 1) % path.length]
-                ],
-              }));
-            }
-    
-            if (!visited.has(neighbor)) {
-              stack.add(neighbor);
-              const cycle = findCycle(neighbor, visited, stack, path);
-              if (cycle) return cycle;
-              stack.delete(neighbor);
-            }
+      function findCycle(node, visited, stack, path) {
+          visited.add(node);
+          path.push(node);
+  
+          for (const neighbor in balances[node]) {
+              if (balances[node][neighbor] > 0) {
+                  if (stack.has(neighbor)) {
+                      // Cycle found: extract the cycle path
+                      const cycleStartIndex = path.indexOf(neighbor);
+                      return path.slice(cycleStartIndex).map((n, i) => ({
+                          from: path[(cycleStartIndex + i) % path.length],
+                          to: path[(cycleStartIndex + i + 1) % path.length],
+                          amount: balances[path[(cycleStartIndex + i) % path.length]][
+                              path[(cycleStartIndex + i + 1) % path.length]
+                          ],
+                      }));
+                  }
+  
+                  if (!visited.has(neighbor)) {
+                      stack.add(neighbor);
+                      const cycle = findCycle(neighbor, visited, stack, path);
+                      if (cycle) return cycle;
+                      stack.delete(neighbor);
+                  }
+              }
           }
-        }
-    
-        path.pop();
-        return null;
-      };
-    
-      // Main loop to simplify balances
-      while (true) {
-        const visited = new Set();
-        let cycleFound = false;
-    
-        for (const user in balances) {
-          if (!visited.has(user)) {
-            const stack = new Set([user]);
-            const path = [];
-            const cycle = findCycle(user, visited, stack, path);
-    
-            if (cycle) {
-              cycleFound = true;
-    
-              // Find the minimum edge in the cycle
-              const minEdge = Math.min(...cycle.map(({ amount }) => amount));
-    
-              // Reduce the cycle by the minimum edge and update balances
-              cycle.forEach(({ from, to }) => {
-                balances[from][to] -= minEdge;
-                balances[to] = balances[to] || {};
-                balances[to][from] = (balances[to][from] || 0) + minEdge;
-    
-                if (balances[from][to] === 0) delete balances[from][to];
-                if (balances[to][from] === 0) delete balances[to][from];
-    
-                // Record the simplified payment
-                simplifiedPayments.push({ payee: from, payer: to, amount: minEdge });
-              });
-    
-              break;
-            }
-          }
-        }
-    
-        if (!cycleFound) break; // Exit when no cycles are left
+  
+          path.pop();
+          return null;
       }
-    
-      return simplifiedPayments;
-    };
-    
+  
+      // Main function to eliminate cycles
+      function simplifyBalances() {
+          while (true) {
+              let cycleFound = false;
+              const visited = new Set();
+  
+              for (const user in balances) {
+                  if (!visited.has(user)) {
+                      const stack = new Set([user]);
+                      const path = [];
+                      const cycle = findCycle(user, visited, stack, path);
+  
+                      if (cycle) {
+                          cycleFound = true;
+  
+                          // Find the minimum edge in the cycle
+                          const minEdge = Math.min(...cycle.map(({ amount }) => amount));
+  
+                          // Update balances and record payments
+                          cycle.forEach(({ from, to }) => {
+                              balances[from][to] -= minEdge;
+                              balances[to][from] = (balances[to][from] || 0) + minEdge;
+  
+                              if (balances[from][to] === 0) delete balances[from][to];
+                              if (balances[to][from] === 0) delete balances[to][from];
+  
+                              // Record the simplified payment
+                              payments.push({ payer: to, payee: from, amount: minEdge });
+                          });
+  
+                          break; // Start fresh to look for more cycles
+                      }
+                  }
+              }
+  
+              if (!cycleFound) break;
+          }
+      }
+  
+      simplifyBalances();
+      return payments;
+  }
 
-    const simplifiedPayments = simplifyBalances(balances);
+    const simplifiedPayments = eliminateCycles(balances);
 
+    // Save simplified payments
     const simplifiedPayment = new SimplifiedPayment({
       group: groupId,
       payments: simplifiedPayments,
@@ -307,6 +329,7 @@ router.post('/group/:id/simplify-payments', auth, async (req, res) => {
 
     res.json({ simplifiedPayment });
   } catch (err) {
+    console.error("Error simplifying payments:", err);
     res.status(500).json({ error: err.message });
   }
 });
