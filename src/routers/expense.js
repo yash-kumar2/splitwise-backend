@@ -86,6 +86,63 @@ const validateExpense = async (req, res, next) => {
       res.status(500).json({ error: error.message });
     }
   };
+
+  const validateExpenseDeletion = async (req, res, next) => {
+    try {
+      const { id: expenseId } = req.params;
+      const currentUserId = req.user._id;
+  
+      // Fetch the expense to be deleted
+      const expense = await Expense.findById(expenseId);
+      if (!expense) {
+        return res.status(404).json({ error: 'Expense not found' });
+      }
+  
+      const { group, payers } = expense;
+  
+      // Validate if current user is either a payer or creator of the expense
+      const isUserAuthorized =
+        expense.createdBy.toString() === currentUserId.toString() ||
+        payers.some(payer => payer.user.toString() === currentUserId.toString());
+  
+      if (!isUserAuthorized) {
+        return res.status(403).json({ error: 'User not authorized to delete this expense' });
+      }
+  
+      // If group is specified, ensure user is part of the group
+      if (group) {
+        const groupDoc = await Group.findById(group);
+  
+        if (!groupDoc) {
+          return res.status(404).json({ error: 'Group not found' });
+        }
+  
+        const isUserInGroup = groupDoc.users.some(
+          userId => userId.toString() === currentUserId.toString()
+        );
+  
+        if (!isUserInGroup) {
+          return res.status(403).json({ error: 'User is not a member of the group' });
+        }
+      }
+  
+      // If validation passes, proceed to the next middleware
+      req.expense = expense; // Pass the expense to the next middleware
+      next();
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+  
+  router.delete('/expense/:id', auth, validateExpenseDeletion, async (req, res) => {
+    try {
+      const { id: expenseId } = req.params;
+      await Expense.findByIdAndDelete(expenseId);
+      res.status(200).json({ message: 'Expense deleted successfully' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
   
 router.post('/expense',auth,validateExpense, async (req, res) => {
   try {
@@ -189,6 +246,35 @@ router.post('/settlements/:id/mark-as-read',auth, async (req, res) => {
     res.status(200).json(settlement);
   } catch (err) {
     res.status(500).json({ message: 'Error marking settlement as read', error: err.message });
+  }
+});
+router.delete('/simplified-payment/:id', auth, async (req, res) => {
+  try {
+      const paymentId = req.params.id;
+
+      // Find the simplified payment
+      const payment = await SimplifiedPayment.findById(paymentId);
+      if (!payment) {
+          return res.status(404).json({ message: 'Simplified Payment not found' });
+      }
+
+      // Find the group and check if the user is a member
+      const group = await Group.findById(payment.group);
+      if (!group) {
+          return res.status(404).json({ message: 'Group not found' });
+      }
+
+      if (!group.users.includes(req.user._id)) {
+          return res.status(403).json({ message: 'You are not authorized to delete this settlement' });
+      }
+
+      // Delete the simplified payment
+      await SimplifiedPayment.findByIdAndDelete(paymentId);
+
+      res.json({ message: 'Simplified Payment deleted successfully' });
+  } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Server error' });
   }
 });
 
