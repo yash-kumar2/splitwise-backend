@@ -4,6 +4,8 @@ const Group = require('../models/group')
 const Expense = require('../models/expense')
 const auth = require('../middleware/auth')
 const router = new express.Router()
+const SimplifiedPayment=require('../models/simplifiedPayment')
+const Settlement=require('../models/settlement')
 
 // POST: Create a new expense
 const validateExpense = async (req, res, next) => {
@@ -272,6 +274,70 @@ router.delete('/simplified-payment/:id', auth, async (req, res) => {
       await SimplifiedPayment.findByIdAndDelete(paymentId);
 
       res.json({ message: 'Simplified Payment deleted successfully' });
+  } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+router.post('/settlement', auth, async (req, res) => {
+  try {
+      const { group, settlements } = req.body;
+      const settler = req.user._id; // Authenticated user
+
+      // Fetch the group and validate membership
+      const groupData = await Group.findById(group);
+      if (!groupData) {
+          return res.status(404).json({ message: 'Group not found' });
+      }
+
+      if (!groupData.users.includes(settler)) {
+          return res.status(403).json({ message: 'Only group members can create a settlement' });
+      }
+
+      // Check if all users in settlements are part of the group
+      const settlementUserIds = settlements.map(settlement => settlement.user);
+      const allUsersValid = settlementUserIds.every(userId => groupData.users.includes(userId));
+
+      if (!allUsersValid) {
+          return res.status(400).json({ message: 'All users in settlement must be group members' });
+      }
+
+      // Create new settlement
+      const newSettlement = new Settlement({
+          settler,
+          group,
+          settlements,
+          readList: [],
+      });
+
+      await newSettlement.save();
+      res.status(201).json({ message: 'Settlement created successfully', settlement: newSettlement });
+
+  } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+router.delete('/settlements/:id', auth, async (req, res) => {
+  try {
+      const settlementId = req.params.id;
+      const userId = req.user._id;
+
+      // Find the settlement
+      const settlement = await Settlement.findById(settlementId);
+      if (!settlement) {
+          return res.status(404).json({ message: 'Settlement not found' });
+      }
+
+      // Check if the user is the settler
+      if (settlement.settler.toString() !== userId.toString()) {
+          return res.status(403).json({ message: 'Only the settler can delete this settlement' });
+      }
+
+      // Delete the settlement
+      await Settlement.findByIdAndDelete(settlementId);
+      res.json({ message: 'Settlement deleted successfully' });
+
   } catch (error) {
       console.error(error);
       res.status(500).json({ message: 'Server error' });
