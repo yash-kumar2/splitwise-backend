@@ -1,6 +1,6 @@
 const mongoose = require('mongoose')
 
-mongoose.connect('mongodb://127.0.0.1:27017/timetable-api', {
+mongoose.connect("mongodb+srv://yashk6767:onetwothree@cluster0.kg9m8.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0", {
     
     
 })
