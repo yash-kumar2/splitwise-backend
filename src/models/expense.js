@@ -5,7 +5,6 @@ const PayerSchema = new mongoose.Schema({
   amount: { type: Number, required: true, min: 0 },
 });
 
-
 const SplitSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   amount: { type: Number, required: true, min: 0 },
@@ -13,12 +12,13 @@ const SplitSchema = new mongoose.Schema({
 
 const ExpenseSchema = new mongoose.Schema({
   description: { type: String, required: true },
-  group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group' }, 
+  group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group' },
   payers: { type: [PayerSchema], required: true },
   splits: { type: [SplitSchema], required: true },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   readList: { type: [mongoose.Schema.Types.ObjectId], ref: 'User', default: [] },
   createdAt: { type: Date, default: Date.now },
+  file: { type: mongoose.Schema.Types.ObjectId, ref: 'File' },
 });
 
 ExpenseSchema.pre('save', function (next) {

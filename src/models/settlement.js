@@ -11,6 +11,7 @@ const SettlementSchema = new mongoose.Schema({
   settlements: { type: [SettlementDetailSchema], required: true }, 
   readList: { type: [mongoose.Schema.Types.ObjectId], ref: 'User', default: [] },
   createdAt: { type: Date, default: Date.now }, 
+  file: { type: mongoose.Schema.Types.ObjectId, ref: 'File' },
 });
 
 module.exports = mongoose.model('Settlement', SettlementSchema);

@@ -1,11 +1,26 @@
 const express = require('express')
 const User = require('../models/user')
 const Group = require('../models/group')
+const File=require('../models/File')
 const Expense = require('../models/expense')
 const auth = require('../middleware/auth')
 const router = new express.Router()
 const SimplifiedPayment=require('../models/simplifiedPayment')
 const Settlement=require('../models/settlement')
+const multer = require('multer');
+const storage = multer.memoryStorage();
+const mongoose = require('mongoose');
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // Limit to 5MB to match frontend
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image or PDF files are allowed!'));
+    }
+  },
+});
 
 // POST: Create a new expense
 const validateExpense = async (req, res, next) => {
@@ -146,17 +161,48 @@ const validateExpense = async (req, res, next) => {
     }
   });
   
-router.post('/expense',auth,validateExpense, async (req, res) => {
-  try {
-    const expense = new Expense(req.body);
-    expense.createdBy=req.user._id;
-    await expense.save();
-    res.status(201).json(expense);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
+  router.post(
+    '/expense',
+    auth,
+    upload.single('file'),
+    async (req, res) => {
+      try {
+        let fileId = null;
+  
+        // Handle file upload if present
+        if (req.file) {
+          const newFile = new File({
+            data: req.file.buffer,
+            contentType: req.file.mimetype,
+          });
+          const savedFile = await newFile.save();
+          fileId = savedFile._id;
+        }
+  
+        // Parse the stringified arrays back to objects
+        const payers = JSON.parse(req.body.payers);
+        const splits = JSON.parse(req.body.splits);
+  
+        // Create expense data object
+        const expenseData = {
+          description: req.body.description,
+          group: req.body.group,
+          payers,
+          splits,
+          file: fileId,
+          createdBy: req.user._id
+        };
+  
+        const expense = new Expense(expenseData);
+        await expense.save();
+  
+        res.status(201).json(expense);
+      } catch (err) {
+        console.error('Error creating expense:', err);
+        res.status(400).json({ error: err.message });
+      }
+    }
+  );
 // GET: Retrieve all expenses
 router.get('/', async (req, res) => {
   try {
@@ -279,45 +325,75 @@ router.delete('/simplified-payment/:id', auth, async (req, res) => {
       res.status(500).json({ message: 'Server error' });
   }
 });
-router.post('/settlement', auth, async (req, res) => {
-  try {
-      const { group, settlements } = req.body;
-      const settler = req.user._id; // Authenticated user
+router.post('/settlement', 
+  auth, 
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      let fileId = null;
+      const settler = req.user._id;
+
+      // Parse the settlements array if it comes as a string
+      const settlements = typeof req.body.settlements === 'string' 
+        ? JSON.parse(req.body.settlements) 
+        : req.body.settlements;
+
+      const group = req.body.group;
+
+      // Handle file upload if present
+      if (req.file) {
+        const newFile = new File({
+          data: req.file.buffer,
+          contentType: req.file.mimetype,
+        });
+        const savedFile = await newFile.save();
+        fileId = savedFile._id;
+      }
 
       // Fetch the group and validate membership
       const groupData = await Group.findById(group);
       if (!groupData) {
-          return res.status(404).json({ message: 'Group not found' });
+        return res.status(404).json({ message: 'Group not found' });
       }
 
       if (!groupData.users.includes(settler)) {
-          return res.status(403).json({ message: 'Only group members can create a settlement' });
+        return res.status(403).json({ message: 'Only group members can create a settlement' });
       }
 
       // Check if all users in settlements are part of the group
       const settlementUserIds = settlements.map(settlement => settlement.user);
-      const allUsersValid = settlementUserIds.every(userId => groupData.users.includes(userId));
+      const allUsersValid = settlementUserIds.every(userId => 
+        groupData.users.includes(userId)
+      );
 
       if (!allUsersValid) {
-          return res.status(400).json({ message: 'All users in settlement must be group members' });
+        return res.status(400).json({ message: 'All users in settlement must be group members' });
       }
 
-      // Create new settlement
+      // Create new settlement with file if present
       const newSettlement = new Settlement({
-          settler,
-          group,
-          settlements,
-          readList: [],
+        settler,
+        group,
+        settlements,
+        readList: [],
+        file: fileId // Add the file reference
       });
 
       await newSettlement.save();
-      res.status(201).json({ message: 'Settlement created successfully', settlement: newSettlement });
+      res.status(201).json({ 
+        message: 'Settlement created successfully', 
+        settlement: newSettlement 
+      });
 
-  } catch (error) {
+    } catch (error) {
       console.error(error);
+      if (error instanceof SyntaxError) {
+        return res.status(400).json({ message: 'Invalid request data format' });
+      }
       res.status(500).json({ message: 'Server error' });
+    }
   }
-});
+);
 router.delete('/settlements/:id', auth, async (req, res) => {
   try {
       const settlementId = req.params.id;
@@ -343,6 +419,78 @@ router.delete('/settlements/:id', auth, async (req, res) => {
       res.status(500).json({ message: 'Server error' });
   }
 });
+router.get('/file/:id', async (req, res) => {
+  try {
+    const fileId = req.params.id;
 
+    // Validate if it's a valid ObjectId
+    if (!mongoose.Types.ObjectId.isValid(fileId)) {
+      return res.status(400).json({ message: 'Invalid file ID' });
+    }
+
+    // Find the file
+    const file = await File.findById(fileId);
+    if (!file) {
+      return res.status(404).json({ message: 'File not found' });
+    }
+
+    // Find if the file is associated with an expense or settlement
+    // that the user has access to
+    // const expense = await Expense.findOne({ file: fileId, group: { $in: req.user.groups } });
+    // const settlement = await Settlement.findOne({ file: fileId, group: { $in: req.user.groups } });
+
+    // if (!expense && !settlement) {
+    //   return res.status(403).json({ message: 'Access denied to this file' });
+    // }
+
+    // Set the content type header
+    res.set('Content-Type', file.contentType);
+
+    // Set content disposition to make the file downloadable
+    const isImage = file.contentType.startsWith('image/');
+    if (!isImage) {
+      res.set('Content-Disposition', 'attachment');
+    }
+
+    // Send the file
+    res.send(file.data);
+
+  } catch (error) {
+    console.error('Error serving file:', error);
+    res.status(500).json({ message: 'Error retrieving file' });
+  }
+});
+router.get('/file/:id/metadata', auth, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+
+    if (!mongoose.Types.ObjectId.isValid(fileId)) {
+      return res.status(400).json({ message: 'Invalid file ID' });
+    }
+
+    const file = await File.findById(fileId, { data: 0 }); // Exclude the file data
+    if (!file) {
+      return res.status(404).json({ message: 'File not found' });
+    }
+
+    const expense = await Expense.findOne({ file: fileId, group: { $in: req.user.groups } });
+    const settlement = await Settlement.findOne({ file: fileId, group: { $in: req.user.groups } });
+
+    // if (!expense && !settlement) {
+    //   return res.status(403).json({ message: 'Access denied to this file' });
+    // }
+
+    res.json({
+      id: file._id,
+      contentType: file.contentType,
+      createdAt: file.createdAt,
+      associatedWith: expense ? 'expense' : 'settlement'
+    });
+
+  } catch (error) {
+    console.error('Error retrieving file metadata:', error);
+    res.status(500).json({ message: 'Error retrieving file metadata' });
+  }
+});
 
 module.exports = router;
